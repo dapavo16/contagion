@@ -1,0 +1,5 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+contagion_out.png
+.DS_Store
