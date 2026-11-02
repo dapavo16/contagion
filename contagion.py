@@ -187,11 +187,15 @@ def classify(cluster: list[tuple[int, int]]) -> Shape:
     # round button is still a round button. Work on the filled silhouette, and
     # only its outer contour.
     filled = _fill_holes(cluster)
-    pts = np.array(filled)                       # rows of (y, x)
-    cy, cx = pts.mean(axis=0)
-    contour = _contour(filled)
-    cont = np.array(contour, dtype=np.float64)   # rows of (y, x)
-    dy, dx = cont[:, 0] - cy, cont[:, 1] - cx
+    cy, cx = np.array(filled).mean(axis=0)
+    contour = np.array(_contour(filled), dtype=np.float64)   # rows of (y, x)
+    return describe(len(cluster), len(filled), cy, cx, contour)
+
+
+def describe(pixels: int, filled_pixels: int, cy: float, cx: float,
+             contour: np.ndarray) -> Shape:
+    """Label a silhouette from its barycentre and outer contour (rows of y, x)."""
+    dy, dx = contour[:, 0] - cy, contour[:, 1] - cx
     dist = np.hypot(dx, dy)
     mean, std = float(dist.mean()), float(dist.std())
     cv = std / mean if mean else 0.0
@@ -199,7 +203,7 @@ def classify(cluster: list[tuple[int, int]]) -> Shape:
     profile = _radial_profile(np.arctan2(dy, dx), dist)
     peaks = _peaks(profile)
 
-    if _solidity(filled, contour) < MIN_SOLIDITY:
+    if _solidity(filled_pixels, contour) < MIN_SOLIDITY:
         label = "unknown"     # concave: a letter, a blob, two shapes merged
     elif cv < CIRCLE_MAX_CV:
         label = "circle"
@@ -215,8 +219,8 @@ def classify(cluster: list[tuple[int, int]]) -> Shape:
     return Shape(
         label=label,
         barycentre=(float(cx), float(cy)),
-        contour=[(x, y) for y, x in contour],
-        pixels=len(cluster),
+        contour=[(int(x), int(y)) for y, x in contour],
+        pixels=pixels,
         mean_distance=mean,
         std_distance=std,
         corners=len(peaks),
@@ -245,9 +249,18 @@ def _fill_holes(cluster: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return list(zip((ys + y0).tolist(), (xs + x0).tolist()))
 
 
-def _solidity(filled: list[tuple[int, int]], contour: list[tuple[int, int]]) -> float:
+def _solidity(filled_pixels: int, contour: np.ndarray) -> float:
     """Filled area over the area of its convex hull: 1 for any convex shape."""
-    hull = _convex_hull([(x, y) for y, x in contour])
+    # Hull corners are always a row's leftmost or rightmost pixel: keep only
+    # those two per row, which cuts the points the hull has to sort by ~10x.
+    ys, xs = contour[:, 0].astype(np.int64), contour[:, 1].astype(np.int64)
+    order = np.lexsort((xs, ys))
+    ys, xs = ys[order], xs[order]
+    starts = np.flatnonzero(np.r_[True, ys[1:] != ys[:-1]])
+    ends = np.r_[starts[1:], len(ys)] - 1
+    rows = ys[starts]
+    hull = _convex_hull(list(zip(xs[starts].tolist(), rows.tolist()))
+                        + list(zip(xs[ends].tolist(), rows.tolist())))
     if len(hull) < 3:
         return 1.0
     xs, ys = np.array(hull, dtype=np.float64).T
@@ -255,7 +268,7 @@ def _solidity(filled: list[tuple[int, int]], contour: list[tuple[int, int]]) -> 
     # Pixel centres sit half a pixel inside the drawn edge: pad the hull by
     # half its perimeter so small convex shapes are not read as concave.
     perimeter = float(np.hypot(np.diff(xs, append=xs[0]), np.diff(ys, append=ys[0])).sum())
-    return min(1.0, len(filled) / (area + perimeter / 2 + 1))
+    return min(1.0, filled_pixels / (area + perimeter / 2 + 1))
 
 
 def _convex_hull(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -294,10 +307,9 @@ def _radial_profile(angles: np.ndarray, dist: np.ndarray) -> np.ndarray:
     one bump per corner for a polygon, wherever the shape is rotated.
     """
     bins = ((angles + math.pi) / (2 * math.pi) * ANGLE_BINS).astype(int) % ANGLE_BINS
-    profile = np.full(ANGLE_BINS, np.nan)
-    for b, d in zip(bins, dist):
-        if np.isnan(profile[b]) or d > profile[b]:
-            profile[b] = d
+    profile = np.full(ANGLE_BINS, -np.inf)
+    np.maximum.at(profile, bins, dist)
+    profile[np.isinf(profile)] = np.nan
     # Small shapes leave some slices empty: fill them from their neighbours.
     known = ~np.isnan(profile)
     if not known.all():

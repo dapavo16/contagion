@@ -56,8 +56,36 @@ radius jumps small gaps, so a dashed or slightly broken outline stays one shape.
 pip install -r requirements.txt
 python demo.py                                  # draws the test sheet, writes examples/
 python contagion.py photo.png -o out.png --radius 2 --min-pixels 100
-pytest -q                                       # 21 tests
+pytest -q                                       # 24 tests
+
+pip install numba                               # optional: the compiled version
+python contagion_fast.py photo.jpg -o out.png
 ```
+
+## Performance: a compiled version
+
+`contagion.py` is the readable reference: it shows the algorithm step by step,
+but pure Python touches every pixel through the interpreter. `contagion_fast.py`
+runs the same steps with the two pixel loops (the contagion and the hole
+filling) compiled by [Numba](https://numba.pydata.org/), and passes shapes as
+label images instead of lists of coordinates. The classification is shared, and
+the tests check that both versions find the same clusters and the same shapes.
+
+| Image | Pure Python | Numba | of which, the contagion | OpenCV (C++) |
+|---|---|---|---|---|
+| Demo sheet, 0.5 Mpx | 276 ms | 8 ms | 1.2 ms | 0.5 ms |
+| Phone photo, 0.6 Mpx | 320 ms | 13 ms | 1.1 ms | 0.5 ms |
+| Phone photo, 12 Mpx | 7.4 s | 123 ms | 22 ms | 8.7 ms |
+
+*Best of several runs on an Apple Silicon Mac. The first Numba call compiles
+(then cached on disk). The OpenCV column is threshold + external contours +
+polygon approximation, the closest built-in equivalent.*
+
+Compiled, the contagion itself runs at about 25 ms for 12 megapixels, close to
+OpenCV's whole pipeline; what is left is the classification, still in Python
+(the convex hull, the radial profile). Next steps, in order of payoff:
+compile the classification too, classify shapes in parallel (each one is
+independent), and skip the hole filling for shapes that have no hole.
 
 ## Notes
 
@@ -66,14 +94,13 @@ pytest -q                                       # 21 tests
   raised recursion limit; an explicit stack would do the same job iteratively,
   but the recursive version is the idea as I first wrote it.
 - Speed: each pixel is visited once, so the work grows linearly with the
-  image, but this is pure Python. The 900×520 demo sheet takes about 0.3 s, a
-  12-megapixel photo about 7 s; OpenCV's C++ contour finder does the same
-  ground work some 600 times faster.
+  image. In pure Python that still means about 0.3 s for the demo sheet and
+  7 s for a 12-megapixel photo; see the compiled version above.
 - A 12-megapixel photo has shapes of over a million pixels, deeper than the
   recursion can go: `find_clusters(..., recursive=False)` runs the same
   contagion on an explicit stack, with no depth limit.
 - On a real phone photo (900×675, reflections, uneven light), Otsu's threshold
-  holds up and it runs in about 0.4 s: round buttons come out as circles,
+  holds up: round buttons come out as circles,
   rounded icons as squares, toggles as ellipses, text as `unknown`.
 - Limits: shapes that touch become one cluster (a phone and its charging
   cable), and anything that is not a basic shape (a gear icon) stays `unknown`.
