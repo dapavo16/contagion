@@ -84,3 +84,29 @@ def test_triangle(angle):
     img, d = canvas()
     d.polygon(rotated([(60, 240), (240, 240), (150, 70)], angle, 150, 180), fill=0)
     assert only_shape(img).label == "triangle"
+
+
+def test_ring_is_a_circle():
+    img, d = canvas()
+    d.ellipse((50, 50, 250, 250), fill=0)
+    d.ellipse((90, 90, 210, 210), fill=255)          # hollow it out
+    assert only_shape(img).label == "circle"
+
+
+def test_round_button_with_an_icon_is_a_circle():
+    img, d = canvas()
+    d.ellipse((50, 50, 250, 250), fill=0)
+    d.polygon([(150, 90), (200, 200), (100, 200)], fill=255)
+    assert only_shape(img).label == "circle"
+
+
+@pytest.mark.parametrize("letter", ["L", "T"])
+def test_concave_shapes_are_unknown(letter):
+    img, d = canvas()
+    if letter == "L":
+        d.rectangle((60, 40, 110, 260), fill=0)
+        d.rectangle((60, 210, 240, 260), fill=0)
+    else:
+        d.rectangle((40, 40, 260, 90), fill=0)
+        d.rectangle((125, 40, 175, 260), fill=0)
+    assert only_shape(img).label == "unknown"

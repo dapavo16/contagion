@@ -40,7 +40,10 @@ dropped them.
      the dips between the 4 peaks tells a square from a rectangle.
 
    Because it is measured around the barycentre, none of this depends on how
-   the shape is rotated.
+   the shape is rotated. Holes are filled first, so a ring or a round button
+   with an icon on it still reads as a circle, and a shape whose area falls
+   well short of its convex hull (a letter, two shapes merged) is left as
+   `unknown` rather than forced into a category.
 7. **Overlay.** Each barycentre gets its label and its contour, drawn over the
    original image.
 
@@ -53,7 +56,7 @@ radius jumps small gaps, so a dashed or slightly broken outline stays one shape.
 pip install -r requirements.txt
 python demo.py                                  # draws the test sheet, writes examples/
 python contagion.py photo.png -o out.png --radius 2 --min-pixels 100
-pytest -q                                       # 16 tests
+pytest -q                                       # 20 tests
 ```
 
 ## Notes
@@ -63,8 +66,11 @@ pytest -q                                       # 16 tests
   raised recursion limit; an explicit stack would do the same job iteratively,
   but the recursive version is the idea as I first wrote it.
 - Pure Python on the scan: the 900×520 demo sheet takes about 0.2 s.
-- Limits: shapes must not touch each other (they would be one cluster), and the
-  thresholds in `contagion.py` are tuned for clean, filled shapes.
+- On a real phone photo (900×675, reflections, uneven light), Otsu's threshold
+  holds up and it runs in about 0.4 s: round buttons come out as circles,
+  rounded icons as squares, toggles as ellipses, text as `unknown`.
+- Limits: shapes that touch become one cluster (a phone and its charging
+  cable), and anything that is not a basic shape (a gear icon) stays `unknown`.
 
 ## Origin
 

@@ -22,7 +22,7 @@ import threading
 from dataclasses import dataclass, field
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 
 # ------------------------------------------------------------------ step 1
@@ -144,12 +144,17 @@ CIRCLE_MAX_CV = 0.05           # std / mean of the contour distance
 PEAK_HALF_WINDOW = 5           # a corner is the highest point within +/- 20 degrees
 PEAK_MIN_RISE = 0.04           # ... and stands 4 % above the mean distance
 SQUARE_MIN_SIDE_RATIO = 0.85   # shorter half-side / longer half-side
+MIN_SOLIDITY = 0.9             # filled area / convex hull area
 
 
 def classify(cluster: list[tuple[int, int]]) -> Shape:
-    pts = np.array(cluster)                      # rows of (y, x)
+    # Holes do not change what a shape is: a ring is a circle, an icon on a
+    # round button is still a round button. Work on the filled silhouette, and
+    # only its outer contour.
+    filled = _fill_holes(cluster)
+    pts = np.array(filled)                       # rows of (y, x)
     cy, cx = pts.mean(axis=0)
-    contour = _contour(cluster)
+    contour = _contour(filled)
     cont = np.array(contour, dtype=np.float64)   # rows of (y, x)
     dy, dx = cont[:, 0] - cy, cont[:, 1] - cx
     dist = np.hypot(dx, dy)
@@ -159,7 +164,9 @@ def classify(cluster: list[tuple[int, int]]) -> Shape:
     profile = _radial_profile(np.arctan2(dy, dx), dist)
     peaks = _peaks(profile)
 
-    if cv < CIRCLE_MAX_CV:
+    if _solidity(filled, contour) < MIN_SOLIDITY:
+        label = "unknown"     # concave: a letter, a blob, two shapes merged
+    elif cv < CIRCLE_MAX_CV:
         label = "circle"
     elif len(peaks) == 2:
         label = "ellipse"
@@ -180,6 +187,61 @@ def classify(cluster: list[tuple[int, int]]) -> Shape:
         corners=len(peaks),
         profile=profile,
     )
+
+
+def _fill_holes(cluster: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Add every background pixel the outside cannot reach: the holes."""
+    pts = np.array(cluster)
+    y0, x0 = pts.min(axis=0) - 1
+    y1, x1 = pts.max(axis=0) + 1
+    mask = np.zeros((y1 - y0 + 1, x1 - x0 + 1), dtype=bool)
+    mask[pts[:, 0] - y0, pts[:, 1] - x0] = True
+    outside = np.zeros_like(mask)
+    outside[0, 0] = True
+    stack = [(0, 0)]                     # the frame is one pixel wider than the shape
+    h, w = mask.shape
+    while stack:
+        y, x = stack.pop()
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if 0 <= ny < h and 0 <= nx < w and not mask[ny, nx] and not outside[ny, nx]:
+                outside[ny, nx] = True
+                stack.append((ny, nx))
+    ys, xs = np.nonzero(~outside)
+    return list(zip((ys + y0).tolist(), (xs + x0).tolist()))
+
+
+def _solidity(filled: list[tuple[int, int]], contour: list[tuple[int, int]]) -> float:
+    """Filled area over the area of its convex hull: 1 for any convex shape."""
+    hull = _convex_hull([(x, y) for y, x in contour])
+    if len(hull) < 3:
+        return 1.0
+    xs, ys = np.array(hull, dtype=np.float64).T
+    area = 0.5 * abs(np.dot(xs, np.roll(ys, 1)) - np.dot(ys, np.roll(xs, 1)))
+    # Pixel centres sit half a pixel inside the drawn edge: pad the hull by
+    # half its perimeter so small convex shapes are not read as concave.
+    perimeter = float(np.hypot(np.diff(xs, append=xs[0]), np.diff(ys, append=ys[0])).sum())
+    return min(1.0, len(filled) / (area + perimeter / 2 + 1))
+
+
+def _convex_hull(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Andrew's monotone chain."""
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
 
 
 def _contour(cluster: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -278,7 +340,8 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=int, default=None)
     args = parser.parse_args()
 
-    img = Image.open(args.image)
+    # Phone photos are stored sideways with an EXIF flag saying how to turn them.
+    img = ImageOps.exif_transpose(Image.open(args.image))
     found = detect(img, args.radius, args.min_pixels, args.threshold)
     for s in found:
         print(f"{s.label:9s} at ({s.barycentre[0]:.0f}, {s.barycentre[1]:.0f})  "
