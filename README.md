@@ -86,8 +86,7 @@ modern CPU line-scanning labellers are faster.
   or broken outline stays one shape. OpenCV needs an extra morphology step (a
   dilation) to do the same.
 - Not measured yet: dedicated shape detectors such as the Hough transform for
-  circles, which are typically much slower than plain contour finding. That is
-  the comparison the contagion was first built against.
+  circles, which are typically much slower than plain contour finding.
 
 **Closing the gap.** Compiling the classification as well should bring the
 whole pipeline to around 30 ms for 12 megapixels, about three times OpenCV.
