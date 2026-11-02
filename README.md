@@ -56,15 +56,43 @@ radius jumps small gaps, so a dashed or slightly broken outline stays one shape.
 pip install -r requirements.txt
 python demo.py                                  # draws the test sheet, writes examples/
 python contagion.py photo.png -o out.png --radius 2 --min-pixels 100
-pytest -q                                       # 21 tests
+pytest -q                                       # 24 tests
+
+pip install numba                               # optional: the compiled version
+python contagion_fast.py photo.jpg -o out.png
 ```
+
+## Performance: a compiled version
+
+`contagion.py` is the readable reference: it shows the algorithm step by step,
+but pure Python touches every pixel through the interpreter. `contagion_fast.py`
+runs the same steps with the two pixel loops (the contagion and the hole
+filling) compiled by [Numba](https://numba.pydata.org/), and passes shapes as
+label images instead of lists of coordinates. The classification is shared, and
+the tests check that both versions find the same clusters and the same shapes.
+
+| Image | Pure Python | Numba | of which, the contagion | OpenCV (C++) |
+|---|---|---|---|---|
+| Demo sheet, 0.5 Mpx | 276 ms | 8 ms | 1.2 ms | 0.5 ms |
+| Phone photo, 0.6 Mpx | 320 ms | 13 ms | 1.1 ms | 0.5 ms |
+| Phone photo, 12 Mpx | 7.4 s | 123 ms | 22 ms | 8.7 ms |
+
+*Best of several runs on an Apple Silicon Mac. The first Numba call compiles
+(then cached on disk). The OpenCV column is threshold + external contours +
+polygon approximation, the closest built-in equivalent.*
+
+Compiled, the contagion itself runs at about 25 ms for 12 megapixels, close to
+OpenCV's whole pipeline; what is left is the classification, still in Python
+(the convex hull, the radial profile). Next steps, in order of payoff:
+compile the classification too, classify shapes in parallel (each one is
+independent), and skip the hole filling for shapes that have no hole.
 
 ## Compared with OpenCV
 
 Short answer: OpenCV is faster, and it should be. Measured on a 12-megapixel
 phone photo (best of several runs, Apple Silicon):
 
-| | Contagion, pure Python | Contagion, compiled ([PR #1](https://github.com/dapavo16/contagion/pull/1)) | OpenCV |
+| | Contagion, pure Python | Contagion, compiled | OpenCV |
 |---|---|---|---|
 | Grouping the pixels | 2.3 s | 22 ms | — |
 | Whole pipeline | 7.4 s | 123 ms | 8.7 ms |
@@ -101,8 +129,7 @@ algorithm itself, which is not the point of this project.
   but the recursive version is the idea as I first wrote it.
 - Speed: each pixel is visited once, so the work grows linearly with the
   image. In pure Python that still means about 0.3 s for the demo sheet and
-  7 s for a 12-megapixel photo; a compiled version is in
-  [PR #1](https://github.com/dapavo16/contagion/pull/1).
+  7 s for a 12-megapixel photo; see the compiled version above.
 - A 12-megapixel photo has shapes of over a million pixels, deeper than the
   recursion can go: `find_clusters(..., recursive=False)` runs the same
   contagion on an explicit stack, with no depth limit.
