@@ -59,6 +59,41 @@ python contagion.py photo.png -o out.png --radius 2 --min-pixels 100
 pytest -q                                       # 21 tests
 ```
 
+## Compared with OpenCV
+
+Short answer: OpenCV is faster, and it should be. Measured on a 12-megapixel
+phone photo (best of several runs, Apple Silicon):
+
+| | Contagion, pure Python | Contagion, compiled ([PR #1](https://github.com/dapavo16/contagion/pull/1)) | OpenCV |
+|---|---|---|---|
+| Grouping the pixels | 2.3 s | 22 ms | — |
+| Whole pipeline | 7.4 s | 123 ms | 8.7 ms |
+
+**Why OpenCV wins.** Its connected-components and contour code is over twenty
+years of tuned C++: it scans the image in 2×2 blocks with SIMD instructions and
+precomputed decision tables, reading memory once or twice in straight lines,
+which suits the CPU cache. The contagion is a flood fill: it jumps from a pixel
+to its neighbours in every direction, a well-known and sound approach, but on a
+modern CPU line-scanning labellers are faster.
+
+**Why the comparison is not like for like.**
+
+- OpenCV's pipeline here (threshold, external contours, polygon approximation)
+  finds outlines; it does not say "circle" or "square". The contagion does the
+  whole classification, and that is where most of its time goes. A fair
+  head-to-head would build the same classifier on top of OpenCV.
+- The contagion radius has no direct OpenCV equivalent: with `r > 1` a dashed
+  or broken outline stays one shape. OpenCV needs an extra morphology step (a
+  dilation) to do the same.
+- Not measured yet: dedicated shape detectors such as the Hough transform for
+  circles, which are typically much slower than plain contour finding. That is
+  the comparison the contagion was first built against.
+
+**Closing the gap.** Compiling the classification as well should bring the
+whole pipeline to around 30 ms for 12 megapixels, about three times OpenCV.
+Beyond that, a block-based scan instead of a flood fill would change the
+algorithm itself, which is not the point of this project.
+
 ## Notes
 
 - The contagion recurses once per pixel, so a large shape goes tens of
@@ -66,14 +101,14 @@ pytest -q                                       # 21 tests
   raised recursion limit; an explicit stack would do the same job iteratively,
   but the recursive version is the idea as I first wrote it.
 - Speed: each pixel is visited once, so the work grows linearly with the
-  image, but this is pure Python. The 900×520 demo sheet takes about 0.3 s, a
-  12-megapixel photo about 7 s; OpenCV's C++ contour finder does the same
-  ground work some 600 times faster.
+  image. In pure Python that still means about 0.3 s for the demo sheet and
+  7 s for a 12-megapixel photo; a compiled version is in
+  [PR #1](https://github.com/dapavo16/contagion/pull/1).
 - A 12-megapixel photo has shapes of over a million pixels, deeper than the
   recursion can go: `find_clusters(..., recursive=False)` runs the same
   contagion on an explicit stack, with no depth limit.
 - On a real phone photo (900×675, reflections, uneven light), Otsu's threshold
-  holds up and it runs in about 0.4 s: round buttons come out as circles,
+  holds up: round buttons come out as circles,
   rounded icons as squares, toggles as ellipses, text as `unknown`.
 - Limits: shapes that touch become one cluster (a phone and its charging
   cable), and anything that is not a basic shape (a gear icon) stays `unknown`.
