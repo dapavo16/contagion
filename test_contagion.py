@@ -110,3 +110,11 @@ def test_concave_shapes_are_unknown(letter):
         d.rectangle((40, 40, 260, 90), fill=0)
         d.rectangle((125, 40, 175, 260), fill=0)
     assert only_shape(img).label == "unknown"
+
+
+def test_stack_version_finds_the_same_clusters():
+    rng = np.random.default_rng(3)
+    b = (rng.random((120, 160)) > 0.55).astype(np.uint8)
+    as_sets = lambda cs: sorted(sorted(c) for c in cs)
+    for r in (1, 2):
+        assert as_sets(find_clusters(b, r)) == as_sets(find_clusters(b, r, recursive=False))

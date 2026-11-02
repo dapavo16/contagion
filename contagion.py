@@ -52,13 +52,20 @@ def _otsu(grey: np.ndarray) -> int:
 
 
 # ------------------------------------------------------------- steps 2 to 4
-def find_clusters(binary: np.ndarray, radius: int = 1) -> list[list[tuple[int, int]]]:
+def find_clusters(binary: np.ndarray, radius: int = 1,
+                  recursive: bool = True) -> list[list[tuple[int, int]]]:
     """Scan the rows; every black pixel found starts a contagion.
 
     `radius` is how far a pixel infects: 1 means the 8 touching neighbours,
     a larger radius jumps small gaps so a dashed outline stays one shape.
     The input array is not modified.
+
+    `recursive=False` runs the same contagion with an explicit stack instead
+    of the call stack: no depth limit, for shapes of more than ~1M pixels
+    (a full-resolution photo).
     """
+    if not recursive:
+        return _find_clusters_stack(binary, radius)
     grid = binary.copy()
     height, width = grid.shape
     offsets = [(dy, dx)
@@ -87,6 +94,34 @@ def find_clusters(binary: np.ndarray, radius: int = 1) -> list[list[tuple[int, i
                     clusters.append(cluster)
 
     _run_deep(scan)
+    return clusters
+
+
+def _find_clusters_stack(binary: np.ndarray, radius: int) -> list[list[tuple[int, int]]]:
+    grid = binary.copy()
+    height, width = grid.shape
+    offsets = [(dy, dx)
+               for dy in range(-radius, radius + 1)
+               for dx in range(-radius, radius + 1)
+               if (dy, dx) != (0, 0)]
+    clusters = []
+    # Only rows holding a black pixel are worth scanning pixel by pixel.
+    for y in np.flatnonzero(grid.any(axis=1)):
+        for x in np.flatnonzero(grid[y]):
+            if not grid[y, x]:
+                continue          # already taken by an earlier contagion
+            grid[y, x] = 0
+            cluster = [(int(y), int(x))]
+            stack = [(int(y), int(x))]
+            while stack:
+                cy, cx = stack.pop()
+                for dy, dx in offsets:
+                    ny, nx = cy + dy, cx + dx
+                    if 0 <= ny < height and 0 <= nx < width and grid[ny, nx]:
+                        grid[ny, nx] = 0
+                        cluster.append((ny, nx))
+                        stack.append((ny, nx))
+            clusters.append(cluster)
     return clusters
 
 
@@ -324,9 +359,10 @@ def overlay(image: Image.Image, shapes: list[Shape]) -> Image.Image:
 
 # ------------------------------------------------------------------ all
 def detect(image: Image.Image, radius: int = 1, min_pixels: int = 50,
-           threshold: int | None = None) -> list[Shape]:
+           threshold: int | None = None, recursive: bool = True) -> list[Shape]:
     binary = binarize(image, threshold)
-    return [classify(c) for c in sieve(find_clusters(binary, radius), min_pixels)]
+    clusters = find_clusters(binary, radius, recursive)
+    return [classify(c) for c in sieve(clusters, min_pixels)]
 
 
 if __name__ == "__main__":

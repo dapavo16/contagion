@@ -56,7 +56,7 @@ radius jumps small gaps, so a dashed or slightly broken outline stays one shape.
 pip install -r requirements.txt
 python demo.py                                  # draws the test sheet, writes examples/
 python contagion.py photo.png -o out.png --radius 2 --min-pixels 100
-pytest -q                                       # 20 tests
+pytest -q                                       # 21 tests
 ```
 
 ## Notes
@@ -65,7 +65,13 @@ pytest -q                                       # 20 tests
   thousands of calls deep. It runs in a worker thread with a large stack and a
   raised recursion limit; an explicit stack would do the same job iteratively,
   but the recursive version is the idea as I first wrote it.
-- Pure Python on the scan: the 900×520 demo sheet takes about 0.2 s.
+- Speed: each pixel is visited once, so the work grows linearly with the
+  image, but this is pure Python. The 900×520 demo sheet takes about 0.3 s, a
+  12-megapixel photo about 7 s; OpenCV's C++ contour finder does the same
+  ground work some 600 times faster.
+- A 12-megapixel photo has shapes of over a million pixels, deeper than the
+  recursion can go: `find_clusters(..., recursive=False)` runs the same
+  contagion on an explicit stack, with no depth limit.
 - On a real phone photo (900×675, reflections, uneven light), Otsu's threshold
   holds up and it runs in about 0.4 s: round buttons come out as circles,
   rounded icons as squares, toggles as ellipses, text as `unknown`.
