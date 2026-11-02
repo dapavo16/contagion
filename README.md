@@ -87,6 +87,40 @@ OpenCV's whole pipeline; what is left is the classification, still in Python
 compile the classification too, classify shapes in parallel (each one is
 independent), and skip the hole filling for shapes that have no hole.
 
+## Compared with OpenCV
+
+Short answer: OpenCV is faster, and it should be. Measured on a 12-megapixel
+phone photo (best of several runs, Apple Silicon):
+
+| | Contagion, pure Python | Contagion, compiled | OpenCV |
+|---|---|---|---|
+| Grouping the pixels | 2.3 s | 22 ms | — |
+| Whole pipeline | 7.4 s | 123 ms | 8.7 ms |
+
+**Why OpenCV wins.** Its connected-components and contour code is over twenty
+years of tuned C++: it scans the image in 2×2 blocks with SIMD instructions and
+precomputed decision tables, reading memory once or twice in straight lines,
+which suits the CPU cache. The contagion is a flood fill: it jumps from a pixel
+to its neighbours in every direction, a well-known and sound approach, but on a
+modern CPU line-scanning labellers are faster.
+
+**Why the comparison is not like for like.**
+
+- OpenCV's pipeline here (threshold, external contours, polygon approximation)
+  finds outlines; it does not say "circle" or "square". The contagion does the
+  whole classification, and that is where most of its time goes. A fair
+  head-to-head would build the same classifier on top of OpenCV.
+- The contagion radius has no direct OpenCV equivalent: with `r > 1` a dashed
+  or broken outline stays one shape. OpenCV needs an extra morphology step (a
+  dilation) to do the same.
+- Not measured yet: dedicated shape detectors such as the Hough transform for
+  circles, which are typically much slower than plain contour finding.
+
+**Closing the gap.** Compiling the classification as well should bring the
+whole pipeline to around 30 ms for 12 megapixels, about three times OpenCV.
+Beyond that, a block-based scan instead of a flood fill would change the
+algorithm itself, which is not the point of this project.
+
 ## Notes
 
 - The contagion recurses once per pixel, so a large shape goes tens of
